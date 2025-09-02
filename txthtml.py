@@ -5,144 +5,236 @@ from vars import CREDIT
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-# Function to extract topic, title, and URL from the text file
+# Function to extract names, topics, and URLs from the text file
 def extract_names_and_urls(file_content):
     lines = file_content.strip().split("\n")
     data = []
     for line in lines:
         if ":" in line:
-            name, url = line.split(":", 1)
-            name = name.strip()
-            url = url.strip()
-            if " - " in name:
-                topic, title = name.split(" - ", 1)
+            left, url = line.split(":", 1)
+            if "-" in left:
+                topic, name = left.split("-", 1)
+                data.append((topic.strip(), name.strip(), url.strip()))
             else:
-                topic, title = "General", name
-            data.append((topic.strip(), title.strip(), url))
+                data.append(("General", left.strip(), url.strip()))
     return data
 
 # Function to categorize URLs topic-wise
 def categorize_urls(urls):
-    videos, pdfs, others = {}, {}, {}
-    for topic, title, url in urls:
-        if any(x in url for x in ["akamaized.net/", "1942403233.rsc.cdn77.org/", ".m3u8", ".mp4"]):
-            videos.setdefault(topic, []).append((title, url))
-        elif "pdf" in url:
-            pdfs.setdefault(topic, []).append((title, url))
-        else:
-            others.setdefault(topic, []).append((title, url))
-    return videos, pdfs, others
+    categorized = {}
 
-# Function to generate HTML file with Accordion + Search
-def generate_html(file_name, videos, pdfs, others):
+    for topic, name, url in urls:
+        if topic not in categorized:
+            categorized[topic] = {"videos": [], "pdfs": [], "others": []}
+
+        new_url = url
+        if "akamaized.net/" in url or "1942403233.rsc.cdn77.org/" in url:
+            new_url = f"https://www.khanglobalstudies.com/player?src={url}"
+            categorized[topic]["videos"].append((name, new_url))
+
+        elif "d1d34p8vz63oiq.cloudfront.net/" in url:
+            new_url = f"https://anonymouspwplayer-b99f57957198.herokuapp.com/pw?url={url}?token=YOUR_TOKEN"
+            categorized[topic]["videos"].append((name, new_url))
+
+        elif "youtube.com/embed" in url:
+            yt_id = url.split("/")[-1]
+            new_url = f"https://www.youtube.com/watch?v={yt_id}"
+            categorized[topic]["videos"].append((name, new_url))
+
+        elif ".m3u8" in url or ".mp4" in url:
+            categorized[topic]["videos"].append((name, url))
+        elif ".pdf" in url:
+            categorized[topic]["pdfs"].append((name, url))
+        else:
+            categorized[topic]["others"].append((name, url))
+
+    return categorized
+
+# Function to generate HTML with Accordion + Video.js player
+def generate_html(file_name, categorized):
     file_name_without_extension = os.path.splitext(file_name)[0]
 
-    def build_section(data_dict, section_class):
-        html = ""
-        for topic, items in data_dict.items():
-            html += f"""
-            <button class="accordion">{topic}</button>
-            <div class="panel">
-                <div class="{section_class}">
-            """
-            for title, url in items:
-                if section_class == "video-list":
-                    html += f'<a href="#" onclick="playVideo(\'{url}\')">{title}</a>'
-                else:
-                    html += f'<a href="{url}" target="_blank">{title}</a>'
-            html += "</div></div>"
-        return html
+    accordion_content = ""
+    for topic, sections in categorized.items():
+        video_links = "".join(f'<a href="#" onclick="playVideo(\'{url}\')">{name}</a>'
+                              for name, url in sections["videos"])
+        pdf_links = "".join(f'<a href="{url}" target="_blank">{name}</a>'
+                            for name, url in sections["pdfs"])
+        other_links = "".join(f'<a href="{url}" target="_blank">{name}</a>'
+                              for name, url in sections["others"])
 
-    video_links = build_section(videos, "video-list")
-    pdf_links = build_section(pdfs, "pdf-list")
-    other_links = build_section(others, "other-list")
+        accordion_content += f"""
+        <button class="accordion">{topic}</button>
+        <div class="panel">
+            <div class="video-list">{video_links}</div>
+            <div class="pdf-list">{pdf_links}</div>
+            <div class="other-list">{other_links}</div>
+        </div>
+        """
 
     html_template = f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{file_name_without_extension}</title>
-<link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
-<style>
-    body {{ font-family: Arial, sans-serif; background: #f5f7fa; padding: 20px; }}
-    h1 {{ text-align: center; }}
-    .accordion {{ background-color: #007bff; color: white; cursor: pointer; padding: 12px; margin: 5px 0; width: 100%; border: none; text-align: left; font-size: 18px; border-radius: 8px; transition: 0.4s; }}
-    .accordion:hover {{ background-color: #0056b3; }}
-    .panel {{ padding: 0 15px; display: none; overflow: hidden; background: white; border: 1px solid #ccc; border-radius: 0 0 8px 8px; margin-bottom: 10px; }}
-    .video-list a, .pdf-list a, .other-list a {{ display: block; padding: 8px; text-decoration: none; color: #007bff; border-bottom: 1px solid #eee; }}
-    .video-list a:hover, .pdf-list a:hover, .other-list a:hover {{ background: #007bff; color: white; }}
-    .search-bar {{ margin: 15px auto; max-width: 600px; text-align: center; }}
-    .search-bar input {{ width: 100%; padding: 10px; border: 2px solid #007bff; border-radius: 6px; font-size: 16px; }}
-    .no-results {{ text-align: center; color: red; font-weight: bold; display: none; }}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{file_name_without_extension}</title>
+    <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+    <style>
+        body {{
+            font-family: Arial, sans-serif;
+            background: #f5f7fa;
+            margin: 0;
+            padding: 0;
+        }}
+        .header {{
+            background: #1c1c1c;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+        }}
+        .subheading {{
+            font-size: 16px;
+            margin-top: 5px;
+            color: #ccc;
+        }}
+        .accordion {{
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            padding: 15px;
+            width: 100%;
+            text-align: left;
+            font-size: 18px;
+            border: none;
+            outline: none;
+            transition: 0.3s;
+            margin: 5px 0;
+            border-radius: 5px;
+        }}
+        .accordion:hover {{
+            background-color: #0056b3;
+        }}
+        .panel {{
+            padding: 0 15px;
+            display: none;
+            background-color: white;
+            overflow: hidden;
+            border-radius: 5px;
+        }}
+        .video-list a, .pdf-list a, .other-list a {{
+            display: block;
+            padding: 10px;
+            margin: 5px 0;
+            background: #f1f1f1;
+            color: #007bff;
+            text-decoration: none;
+            border-radius: 5px;
+        }}
+        .video-list a:hover, .pdf-list a:hover, .other-list a:hover {{
+            background: #007bff;
+            color: white;
+        }}
+        #video-player {{
+            margin: 20px auto;
+            width: 90%;
+            max-width: 800px;
+            display: none;
+        }}
+        .footer {{
+            margin-top: 30px;
+            padding: 15px;
+            background: #1c1c1c;
+            color: white;
+            text-align: center;
+        }}
+        .search-bar {{
+            margin: 20px auto;
+            width: 90%;
+            max-width: 600px;
+            text-align: center;
+        }}
+        .search-bar input {{
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #007bff;
+            border-radius: 5px;
+            font-size: 16px;
+        }}
+    </style>
 </head>
 <body>
-    <h1>{file_name_without_extension}</h1>
-    <div class="search-bar">
-        <input type="text" id="searchInput" placeholder="Search videos, PDFs, or resources..." oninput="filterContent()">
+    <div class="header">
+        {file_name_without_extension}
+        <div class="subheading">📥 Extracted By: {CREDIT}</div>
     </div>
-    <div id="noResults" class="no-results">No results found.</div>
 
-    <h2>Videos</h2>
-    {video_links}
+    <div id="video-player">
+        <video id="engineer-babu-player" class="video-js vjs-default-skin" controls preload="auto"></video>
+    </div>
 
-    <h2>PDFs</h2>
-    {pdf_links}
+    <div class="search-bar">
+        <input type="text" id="searchInput" placeholder="Search..." oninput="filterContent()">
+    </div>
 
-    <h2>Others</h2>
-    {other_links}
+    {accordion_content}
 
-<script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
-<script>
-    var acc = document.getElementsByClassName("accordion");
-    for (let i = 0; i < acc.length; i++) {{
-        acc[i].addEventListener("click", function() {{
-            this.classList.toggle("active");
-            var panel = this.nextElementSibling;
-            panel.style.display = panel.style.display === "block" ? "none" : "block";
-        }});
-    }}
+    <div class="footer">📥 Extracted By: {CREDIT}</div>
 
-    function playVideo(url) {{
-        if (url.includes('.m3u8')) {{
-            window.open(url, "_blank");
-        }} else {{
-            window.open(url, "_blank");
-        }}
-    }}
+    <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+    <script>
+        const player = videojs('engineer-babu-player');
 
-    function filterContent() {{
-        let searchTerm = document.getElementById("searchInput").value.toLowerCase();
-        let links = document.querySelectorAll(".video-list a, .pdf-list a, .other-list a");
-        let accordions = document.querySelectorAll(".accordion");
-        let panels = document.querySelectorAll(".panel");
-        let hasResults = false;
-
-        for (let i = 0; i < links.length; i++) {{
-            let text = links[i].textContent.toLowerCase();
-            if (text.includes(searchTerm)) {{
-                links[i].style.display = "block";
-                let panel = links[i].closest(".panel");
-                if (panel) panel.style.display = "block";
-                hasResults = true;
+        function playVideo(url) {{
+            document.getElementById('video-player').style.display = 'block';
+            if (url.includes('.m3u8')) {{
+                player.src({{ src: url, type: 'application/x-mpegURL' }});
             }} else {{
-                links[i].style.display = "none";
+                player.src({{ src: url, type: 'video/mp4' }});
+            }}
+            player.play();
+        }}
+
+        // Accordion toggle
+        const acc = document.getElementsByClassName("accordion");
+        for (let i = 0; i < acc.length; i++) {{
+            acc[i].addEventListener("click", function() {{
+                this.classList.toggle("active");
+                let panel = this.nextElementSibling;
+                panel.style.display = panel.style.display === "block" ? "none" : "block";
+            }});
+        }}
+
+        // Search filter
+        function filterContent() {{
+            const searchTerm = document.getElementById("searchInput").value.toLowerCase();
+            const acc = document.getElementsByClassName("accordion");
+            let foundAny = false;
+
+            for (let i = 0; i < acc.length; i++) {{
+                let panel = acc[i].nextElementSibling;
+                let links = panel.getElementsByTagName("a");
+                let hasMatch = false;
+
+                for (let link of links) {{
+                    if (link.textContent.toLowerCase().includes(searchTerm)) {{
+                        link.style.display = "block";
+                        hasMatch = true;
+                        foundAny = true;
+                    }} else {{
+                        link.style.display = "none";
+                    }}
+                }}
+
+                panel.style.display = hasMatch ? "block" : "none";
             }}
         }}
-
-        for (let j = 0; j < panels.length; j++) {{
-            let visibleLinks = panels[j].querySelectorAll("a[style='display: block;']");
-            accordions[j].style.display = visibleLinks.length > 0 ? "block" : "none";
-        }}
-
-        document.getElementById("noResults").style.display = hasResults ? "none" : "block";
-    }}
-</script>
+    </script>
 </body>
 </html>
-"""
+    """
     return html_template
 
 # Function to download video using FFmpeg
